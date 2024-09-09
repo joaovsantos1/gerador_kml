@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import pandas as pd
 import sys
+import zipfile
+import shutil
 
 def sanitize_kml_content(content):
     content = content.replace('&', '&amp;')
@@ -12,6 +14,15 @@ def sanitize_kml_content(content):
     content = content.replace('"', '&quot;')
     content = content.replace("'", '&#39;')
     return content
+
+def extract_kmz(kmz_path, extract_to):
+    """Descompacta o arquivo KMZ e retorna o caminho do arquivo KML extraído"""
+    with zipfile.ZipFile(kmz_path, 'r') as kmz:
+        kmz.extractall(extract_to)
+        for file in os.listdir(extract_to):
+            if file.endswith('.kml'):
+                return os.path.join(extract_to, file)
+    return None
 
 def create_kml(coordinates, names, sheet_name="Combined Data", filename="output.kml"):
     kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -91,6 +102,34 @@ def process_all_excels_in_folder(folder_path, single_kml, name_column):
                 except Exception as e:
                     print(f"Erro ao processar {filename}: {e}")
 
+
+
+def process_kml_or_kmz(file_path, output_excel, name_column):
+    """Processa o arquivo KML ou KMZ e converte para Excel"""
+    if file_path.endswith('.kmz'):
+        # Criar um diretório temporário para extrair o KMZ
+        temp_dir = os.path.join(os.path.dirname(file_path), "temp_kmz")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Extrair KMZ
+        kml_file = extract_kmz(file_path, temp_dir)
+        
+        if kml_file:
+            print(f"Arquivo KMZ descompactado: {kml_file}")
+            kml_to_excel(kml_file, output_excel, name_column)
+        else:
+            print("Erro: Nenhum arquivo KML encontrado dentro do KMZ")
+        
+        # Limpar diretório temporário após o processamento
+        shutil.rmtree(temp_dir)
+
+    elif file_path.endswith('.kml'):
+        # Converter diretamente o KML
+        kml_to_excel(file_path, output_excel, name_column)
+
+    else:
+        print("Erro: O arquivo não é KML nem KMZ")
+
 def combine_kmls(kml_files, output_file="all_kml.kml"):
     colors = [
         "ff0000ff",  # Azul
@@ -150,10 +189,7 @@ def combine_kmls(kml_files, output_file="all_kml.kml"):
         f.write(combined_kml)
     print(f"KML combinado gerado com sucesso: {output_file}")
 
-def parse_kml(kml_file):
-    coordinates = []
-    names = []
-
+def kml_to_excel(kml_file, output_excel, name_column):
     tree = ET.parse(kml_file)
     root = tree.getroot()
     
@@ -161,36 +197,49 @@ def parse_kml(kml_file):
     namespace = {'kml': 'http://www.opengis.net/kml/2.2'}
 
     # Itera sobre os elementos Placemark
+    names = []
+    coordinates = []
+    descriptions = []
     for placemark in root.findall('.//kml:Placemark', namespace):
         name = placemark.find('kml:name', namespace)
         coord = placemark.find('.//kml:coordinates', namespace)
+        description = placemark.find('kml:description', namespace)
         
         if name is not None and coord is not None:
             names.append(name.text.strip())
             coordinates.append(coord.text.strip().split(',')[:2])  # Pega apenas Longitude e Latitude
+            if description is not None:
+                descriptions.append(description.text.strip())
+            else:
+                descriptions.append("") #adiciona vazio se nao houver nada
 
-    return names, coordinates
-
-def kml_to_excel(kml_file, output_excel, name_column):
-    names, coordinates = parse_kml(kml_file)
-    
     # Cria um DataFrame
     df = pd.DataFrame(coordinates, columns=['Longitude', 'Latitude'])
     df[name_column] = names
+    df['Descrição'] = descriptions #adiciona como nova coluna
     
     # Salva o DataFrame em um arquivo Excel
     df.to_excel(output_excel, index=False)
 
 def run_program(folder_path, combine=False, name_column='Etiqueta', convert_kml=False):
     if convert_kml:
-        kml_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.kml')]
+        kml_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.kml') or f.endswith('.kmz')]
         for kml_file in kml_files:
             output_excel = os.path.splitext(kml_file)[0] + '.xlsx'
-            kml_to_excel(kml_file, output_excel, name_column)
+            process_kml_or_kmz(kml_file, output_excel, name_column)
+            #kml_to_excel(kml_file, output_excel, name_column)
             print(f"Planilha Excel gerada com sucesso para: {kml_file}")
     else:
         process_all_excels_in_folder(folder_path, single_kml=combine, name_column=name_column)
         print("Processamento concluído. Todos os arquivos KML foram gerados na pasta selecionada.")
+
+def get_resource_path(relative_path):
+    """Retorna o caminho absoluto do recurso, seja executado em modo script ou como um executável."""
+    if hasattr(sys, '_MEIPASS'):
+        # Quando em modo executável, o ícone estará dentro de uma pasta temporária
+        return os.path.join(sys._MEIPASS, relative_path)
+    # Em modo script, o caminho relativo será usado
+    return os.path.join(os.path.abspath("."), relative_path)
 
 def run_gui():
     def start_processing():
@@ -246,8 +295,9 @@ def run_gui():
     y = (screen_height - window_height) // 2
     root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
-    # Definindo o ícone da janela
-    root.iconbitmap(r'C:\Users\JoaoVictor\Documents\JavaScript Projects\gerador_kml\earth.ico')
+    # Definindo o ícone da janela com o caminho obtido pela função get_resource_path
+    icon_path = get_resource_path('earth.ico')
+    root.iconbitmap(icon_path)
 
     # Desativa o redimensionamento
     root.resizable(False, False)
