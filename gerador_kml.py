@@ -6,6 +6,23 @@ import pandas as pd
 import sys
 import zipfile
 import shutil
+import speech_recognition as sr
+
+def recognize_speech():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("Diga algo...")
+        audio = recognizer.listen(source)
+
+        try:
+            text = recognizer.recognize_google(audio, language="pt-BR")
+            print(f"Voce disse: {text}")
+            return text
+        except sr.UnknownValueError:
+            print("Não foi possível entender o áudio")
+        except sr.RequestError as e:
+            print(f"Erro ao acessar o serviço de reconhecimento de voz: {e}")
+        return None
 
 def sanitize_kml_content(content):
     content = content.replace('&', '&amp;')
@@ -24,17 +41,18 @@ def extract_kmz(kmz_path, extract_to):
                 return os.path.join(extract_to, file)
     return None
 
-def create_kml(coordinates, names, sheet_name="Combined Data", filename="output.kml"):
+def create_kml(coordinates, names, descriptions, sheet_name="Combined Data", filename="output.kml"):
     kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
 <name>{sanitize_kml_content(sheet_name)}</name>
-<description>Generated KML from {sanitize_kml_content(sheet_name)}</description>
+<description>Gerado KML do arquivo: {sanitize_kml_content(sheet_name)}</description>
 """
-    for coord, name in zip(coordinates, names):
+    for coord, name, description in zip(coordinates, names, descriptions):
         kml_content += f"""
 <Placemark>
     <name>{sanitize_kml_content(name)}</name>
+    <description>{sanitize_kml_content(description)}</description>
     <Point>
         <coordinates>{coord}</coordinates>
     </Point>
@@ -47,7 +65,7 @@ def create_kml(coordinates, names, sheet_name="Combined Data", filename="output.
     with open(filename, "w", encoding="utf-8-sig") as file:
         file.write(kml_content)
 
-def read_excel(file_path, name_column='Etiqueta'):
+def read_excel(file_path, name_column='Etiqueta', description_column='Descrição'):
     df = pd.read_excel(file_path, header=None)
 
     if 'Longitude' in df.iloc[0].values and 'Latitude' in df.iloc[0].values:
@@ -63,15 +81,21 @@ def read_excel(file_path, name_column='Etiqueta'):
         df = df.dropna(subset=['Longitude', 'Latitude'])
         coordinates = df['Longitude'].astype(str) + ',' + df['Latitude'].astype(str) + ',0'
         names = df[name_column].fillna("").tolist()
+
+        if description_column in df.columns:
+            descriptions = df[description_column].fillna("").tolist()
+        else:
+            descriptions = [""] * len(names)
     else:
         raise ValueError("As colunas 'Longitude' e 'Latitude' não foram encontradas na planilha.")
 
-    return coordinates.tolist(), names
+    return coordinates.tolist(), names, descriptions
 
 def process_all_excels_in_folder(folder_path, single_kml, name_column):
     if single_kml:
         all_coordinates = []
         all_names = []
+        all_descriptions = []
         
         for filename in os.listdir(folder_path):
             if filename.endswith(".xlsx") or filename.endswith(".xls"):
@@ -80,12 +104,13 @@ def process_all_excels_in_folder(folder_path, single_kml, name_column):
                     coordinates, names = read_excel(file_path, name_column=name_column)
                     all_coordinates.extend(coordinates)
                     all_names.extend(names)
+                    all_descriptions.extend(descriptions)
                 except Exception as e:
                     print(f"Erro ao processar {filename}: {e}")
         
         if all_coordinates:
             output_kml = os.path.join(folder_path, "all_data.kml")
-            create_kml(all_coordinates, all_names, sheet_name="All Data", filename=output_kml)
+            create_kml(all_coordinates, all_names, all_descriptions, sheet_name="All Data", filename=output_kml)
             print(f"KML gerado com sucesso para todas as planilhas.")
         else:
             print("Nenhuma coordenada válida encontrada em todas as planilhas.")
@@ -94,10 +119,10 @@ def process_all_excels_in_folder(folder_path, single_kml, name_column):
             if filename.endswith(".xlsx") or filename.endswith(".xls"):
                 file_path = os.path.join(folder_path, filename)
                 try:
-                    coordinates, names = read_excel(file_path, name_column=name_column)
+                    coordinates, names, descriptions = read_excel(file_path, name_column=name_column)
                     sheet_name = os.path.splitext(filename)[0]
                     output_kml = filename.replace(".xlsx", ".kml").replace(".xls", ".kml")
-                    create_kml(coordinates, names, sheet_name=sheet_name, filename=os.path.join(folder_path, output_kml))
+                    create_kml(coordinates, names, descriptions, sheet_name=sheet_name, filename=os.path.join(folder_path, output_kml))
                     print(f"KML gerado com sucesso para: {filename}")
                 except Exception as e:
                     print(f"Erro ao processar {filename}: {e}")
@@ -144,8 +169,8 @@ def combine_kmls(kml_files, output_file="all_kml.kml"):
     combined_kml = """<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
-<name>Combined KML</name>
-<description>All KML files combined with different marker colors</description>
+<name>KMLs Combinados</name>
+<description>Todos os arquivos em KMLs foram combinados com diferentes cores</description>
 """
 
     for i, color in enumerate(colors):
@@ -208,7 +233,7 @@ def kml_to_excel(kml_file, output_excel, name_column):
         if name is not None and coord is not None:
             names.append(name.text.strip())
             coordinates.append(coord.text.strip().split(',')[:2])  # Pega apenas Longitude e Latitude
-            if description is not None:
+            if description.text is not None:
                 descriptions.append(description.text.strip())
             else:
                 descriptions.append("") #adiciona vazio se nao houver nada
@@ -227,7 +252,6 @@ def run_program(folder_path, combine=False, name_column='Etiqueta', convert_kml=
         for kml_file in kml_files:
             output_excel = os.path.splitext(kml_file)[0] + '.xlsx'
             process_kml_or_kmz(kml_file, output_excel, name_column)
-            #kml_to_excel(kml_file, output_excel, name_column)
             print(f"Planilha Excel gerada com sucesso para: {kml_file}")
     else:
         process_all_excels_in_folder(folder_path, single_kml=combine, name_column=name_column)
@@ -240,6 +264,27 @@ def get_resource_path(relative_path):
         return os.path.join(sys._MEIPASS, relative_path)
     # Em modo script, o caminho relativo será usado
     return os.path.join(os.path.abspath("."), relative_path)
+
+def voice_command_listener(name_column_entry, folder_path_entry, select_folder, start_processing, combine_kmls_action_wrapper, kml_convert_var):
+    """Função para ativar o comando de voz e preencher os campos"""
+    recognizer = sr.Recognizer()
+    mic = sr.Microphone()
+
+    # Função para capturar a fala e reconhecê-la como texto
+    def recognize_speech():
+        with mic as source:
+            recognizer.adjust_for_ambient_noise(source)
+            audio = recognizer.listen(source)
+
+        try:
+            speech_text = recognizer.recognize_google(audio, language='pt-BR')
+            return speech_text.lower()  # Converte o texto para minúsculas para facilitar a comparação
+        except sr.UnknownValueError:
+            return None
+        except sr.RequestError:
+            return None
+
+    
 
 def run_gui():
     def start_processing():
@@ -282,6 +327,47 @@ def run_gui():
             messagebox.showinfo("Processamento Concluído", f"Arquivos KML combinados em '{output_file}' gerado com sucesso.")
         else:
             messagebox.showerror("Erro", "Nenhum arquivo KML encontrado para combinar.")
+            # Função para preencher os campos com base no que foi falado
+    def voice_command_wrapper():
+        messagebox.showinfo("Comando de Voz", "Aguardando comando de voz para preencher os campos...")
+
+        # Primeiro comando: Nome da coluna
+        messagebox.showinfo("Comando de Voz", "Diga o nome da coluna para os marcadores.")
+        column_name = recognize_speech().capitalize()
+        if column_name:
+            name_column_entry.delete(0, tk.END)
+            name_column_entry.insert(0, column_name)
+        else:
+            messagebox.showerror("Erro", "Não foi possível reconhecer o nome da coluna.")
+
+        # Segundo comando: Caminho da pasta
+        messagebox.showinfo("Comando de Voz", "Diga o caminho da pasta ou fale 'selecionar' para escolher manualmente.")
+        folder_command = recognize_speech()
+        if folder_command == "selecionar":
+            select_folder()
+        elif folder_command:
+            folder_path = folder_command.capitalize()
+            if os.path.exists(folder_path):
+                folder_path_entry.delete(0, tk.END)
+                folder_path_entry.insert(0, folder_command)
+            else:
+                messagebox.showerror("Caminho Inválido", "O caminho da pasta não é válido. Selecione manualmente.")
+                select_folder()
+        else:
+            messagebox.showerror("Erro","Não foi possível reconhecer o caminho da pasta.")
+
+        # Terceiro comando: Ação a ser realizada
+        messagebox.showinfo("Comando de Voz", "Diga a ação que deseja realizar: 'iniciar', 'combinar', 'converter' ou 'unir'.")
+        action = recognize_speech()
+        if action == "iniciar":
+            start_processing()
+        elif action == "combinar":
+            combine_kmls_action_wrapper()
+        elif action == "converter":
+            kml_convert_var.set(True)
+            start_processing()
+        else:
+            messagebox.showerror("Erro", "Não foi possível reconhecer a ação ou ação não válida.")
 
     root = tk.Tk()
     root.title("Gerador de KML")
@@ -308,12 +394,14 @@ def run_gui():
     tk.Label(frame, text="Nome da coluna para os marcadores:").grid(row=0, column=0, sticky='w')
     name_column_entry = tk.Entry(frame)
     name_column_entry.grid(row=1, column=0, pady=5, sticky='ew')
+    
 
     tk.Label(frame, text="Pasta dos arquivos:").grid(row=2, column=0, sticky='w')
     folder_path_entry = tk.Entry(frame, width=50)
     folder_path_entry.grid(row=3, column=0, pady=5, sticky='ew')
     select_folder_button = tk.Button(frame, text="Selecionar Pasta", command=select_folder)
     select_folder_button.grid(row=3, column=1, padx=5)
+    
 
     start_button = tk.Button(frame, text="Iniciar", command=start_processing)
     start_button.grid(row=4, column=0, padx=10, pady=10, sticky='ew')
@@ -326,6 +414,10 @@ def run_gui():
 
     kml_convert_var = tk.BooleanVar()
     tk.Checkbutton(frame, text="Converter KML para Excel", variable=kml_convert_var).grid(row=5, column=1, pady=10, sticky='w')
+
+    # Botão para ativar o comando de voz
+    voice_button = tk.Button(frame, text="Comando de Voz", command=voice_command_wrapper)
+    voice_button.grid(row=1, column=1, padx=10, pady=10, sticky='ew')
 
     root.mainloop()
 
