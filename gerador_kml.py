@@ -1,12 +1,13 @@
 import os
 import xml.etree.ElementTree as ET
 import tkinter as tk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, PhotoImage
 import pandas as pd
 import sys
 import zipfile
 import shutil
 import speech_recognition as sr
+from PIL import Image, ImageTk
 
 def recognize_speech():
     recognizer = sr.Recognizer()
@@ -374,7 +375,7 @@ def run_gui():
 
     # Definindo a geometria da janela
     window_width = 490
-    window_height = 220
+    window_height = 230
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     x = (screen_width - window_width) // 2
@@ -384,6 +385,13 @@ def run_gui():
     # Definindo o ícone da janela com o caminho obtido pela função get_resource_path
     icon_path = get_resource_path('earth.ico')
     root.iconbitmap(icon_path)
+
+    mic_image_path = get_resource_path('microphone.png')
+
+    mic_image = Image.open(mic_image_path)
+    resized_mic_image = mic_image.resize((32, 32))
+
+    voice_icon = ImageTk.PhotoImage(resized_mic_image)
 
     # Desativa o redimensionamento
     root.resizable(False, False)
@@ -416,8 +424,8 @@ def run_gui():
     tk.Checkbutton(frame, text="Converter KML para Excel", variable=kml_convert_var).grid(row=5, column=1, pady=10, sticky='w')
 
     # Botão para ativar o comando de voz
-    voice_button = tk.Button(frame, text="Comando de Voz", command=voice_command_wrapper)
-    voice_button.grid(row=1, column=1, padx=10, pady=10, sticky='ew')
+    voice_button = tk.Button(frame, image=voice_icon, command=voice_command_wrapper)
+    voice_button.grid(row=1, column=1, padx=6, pady=4, sticky='ew')
 
     root.mainloop()
 
